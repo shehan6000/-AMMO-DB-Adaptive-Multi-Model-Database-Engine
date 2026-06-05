@@ -1,110 +1,122 @@
-# AMMO-DB: Adaptive Multi-Model Database Engine
+# AMMO-DB Project Report
 
+## Title
 
-> Can a database adapt its physical storage layout based on workload evolution across relational, document, graph, and time-series workloads?
+AMMO-DB: An Adaptive Multi-Model Database Engine for Workload-Aware Physical Layout Selection
 
-The prototype implements a unified logical query model on top of SQLite, then tracks workload behavior and adapts physical indexes and collection layout metadata over time.
+## Abstract
 
-## What It Demonstrates
+AMMO-DB studies how a database can expose one logical interface for relational, document, graph, and time-series data while adapting its internal physical design to workload changes. The prototype stores all data durably in SQLite-backed physical structures, collects query-shape statistics, classifies collection behavior, creates adaptive secondary indexes, and routes logical queries through a small cost-based planner.
 
-- Unified logical records for relational rows, JSON documents, graph nodes, graph edges, and time-series events.
-- A small cost-based planner that selects physical operators from logical query intent.
-- Workload monitoring with query-shape statistics.
-- Adaptive indexing for frequently filtered fields.
-- Adaptive collection layout classification: `row`, `document`, `graph`, `timeseries`, or `hybrid`.
-- Online reorganization metadata and index migration.
-- CLI demo and automated tests.
+The current implementation is a compact research prototype. Its value is not that it replaces specialized databases, but that it gives a concrete implementation platform for experimenting with adaptive physical design in multi-model systems.
 
-This is intentionally a research prototype, not a production DBMS. It gives you a complete base that can be expanded into a thesis-grade system.
+## Motivation
 
-## Project Structure
+Applications increasingly mix data models:
 
-```text
-adaptive_mmd/
-  __init__.py
-  adaptive.py       adaptive layout/index controller
-  cli.py            command-line interface
-  engine.py         public database engine API
-  models.py         query and plan data structures
-  planner.py        logical-to-physical planner
-  storage.py        SQLite storage manager
-  workload.py       workload statistics
-demo.py             end-to-end demonstration
-tests/              unit tests
+- user/account data behaves like relational rows,
+- product or article data behaves like JSON documents,
+- social or dependency data behaves like graphs,
+- telemetry behaves like time-series data.
+
+Traditional systems either force the application into one model or provide multiple models with manually tuned physical design. AMMO-DB asks whether the DBMS can infer the right physical strategy from observed workload behavior.
+
+## Contributions
+
+1. A unified logical query abstraction over four data models.
+2. SQLite-backed physical structures for records, field indexes, graph edges, and time-series events.
+3. A planner that maps logical query intent to physical operators.
+4. Workload monitoring over query kind and predicate fields.
+5. An adaptive controller that classifies collections and creates indexes based on workload frequency.
+6. A runnable demo, CLI, test suite, and experimental benchmark.
+
+## System Design
+
+```mermaid
+flowchart TD
+    A["Application / CLI"] --> B["Unified Query Model"]
+    B --> C["Query Planner"]
+    C --> D["Execution Engine"]
+    D --> E["SQLite Storage Manager"]
+    E --> F["Records"]
+    E --> G["Field Index"]
+    E --> H["Graph Edges"]
+    E --> I["Time-Series Events"]
+    D --> J["Workload Monitor"]
+    J --> K["Adaptive Controller"]
+    K --> E
 ```
 
-## Quick Start
+## Logical Model
 
-```powershell
-python demo.py
-```
+The `Query` object captures model-neutral intent:
 
-Run tests:
+- `where` expresses relational/document selection.
+- `project` expresses projection.
+- `start_node`, `edge_label`, and `depth` express graph traversal.
+- `metric`, `time_from`, `time_to`, and `aggregate` express time-series queries.
 
-```powershell
-python -m unittest discover -s tests
-```
+## Physical Operators
 
-Run the Streamlit demo:
+AMMO-DB currently supports:
 
-```powershell
-.\.streamlit_venv\Scripts\streamlit.exe run streamlit_app.py --server.port 8501
-```
+- `record_scan`
+- `document_predicate_scan`
+- `indexed_record_lookup`
+- `graph_traversal`
+- `timeseries_range_scan`
 
-Or use the included launcher:
+## Adaptation Algorithm
 
-```powershell
-.\run_streamlit.ps1
-```
+For each collection:
 
-Try the CLI:
+1. Read workload statistics from `workload_log`.
+2. Count dominant query kind.
+3. Classify layout as `row`, `document`, `graph`, `timeseries`, or `hybrid`.
+4. Create a field index when a predicate field appears at least three times.
+5. Drop field indexes that are no longer used in the observed workload window.
 
-```powershell
-python -m adaptive_mmd.cli init ammo.db
-python -m adaptive_mmd.cli seed ammo.db
-python -m adaptive_mmd.cli query ammo.db users --where city=Tokyo
-python -m adaptive_mmd.cli timeseries ammo.db metrics cpu --from 2026-01-01T00:00:00 --to 2026-01-01T00:05:00
-python -m adaptive_mmd.cli graph ammo.db people alice follows --depth 2
-python -m adaptive_mmd.cli adapt ammo.db
-python -m adaptive_mmd.cli stats ammo.db
-```
+The current policy is intentionally simple and inspectable. A PhD version could replace this with:
 
-## Research Framing
+- a learned cost model,
+- a contextual bandit,
+- reinforcement learning,
+- Bayesian workload classification,
+- or regret-bounded online physical design.
 
-### Problem
+## Evaluation Plan
 
-Modern applications often mix relational entities, JSON-like documents, graph relationships, and time-series measurements. Existing multi-model systems usually expose several data models, but their physical design tends to remain static or manually tuned.
+Recommended experiments:
 
-AMMO-DB explores whether a DBMS can:
+1. **Selection-heavy workload**
+   Measure predicate query latency before and after adaptive index creation.
 
-1. Observe workload behavior.
-2. Infer which physical layout best matches each collection.
-3. Create or remove indexes based on actual query shapes.
-4. Preserve a single logical query interface while changing internals.
+2. **Workload shift**
+   Query `city` repeatedly, adapt, then shift to `role`; observe index migration.
 
-### Research Questions
+3. **Hybrid workload**
+   Mix selection, graph, and time-series queries against one collection family and evaluate hybrid classification.
 
-1. How accurately can workload traces classify dominant data-model behavior?
-2. When does adaptive indexing improve latency enough to justify maintenance cost?
-3. Can a single planner make reasonable operator choices across relational, document, graph, and time-series queries?
-4. How should a system detect hybrid collections that resist a single layout?
+4. **Baseline comparison**
+   Compare against static scan-only execution.
 
-### Baseline Extensions
+5. **Maintenance cost**
+   Measure insertion cost with and without adaptive indexes.
 
-Good thesis extensions from this prototype:
+## Limitations
 
-- Add cardinality estimation and a richer cost model.
-- Implement actual columnar segments for row-heavy analytical collections.
-- Add LSM-style time-series partitions.
-- Add graph-specific adjacency compression.
-- Evaluate against PostgreSQL JSONB, Neo4j, MongoDB, and InfluxDB on mixed workloads.
-- Add reinforcement learning or bandit-based adaptation.
+- SQLite is used as a substrate, not replaced by a full storage engine.
+- Layout migration is represented through metadata and indexes rather than separate page formats.
+- The cost model is heuristic.
+- Query language is Python/CLI structured queries rather than SQL.
+- Graph and time-series operators are minimal.
 
-## Example Output
+## Thesis-Grade Extensions
 
-The demo seeds four workloads, executes mixed queries, adapts the database, and prints:
+1. Implement real physical layouts: row store, column store, JSON trie, compressed adjacency lists, and time partitions.
+2. Add a formal cost model with learned cardinality estimation.
+3. Add online migration with bounded foreground query disruption.
+4. Add a workload generator and benchmark suite.
+5. Add declarative SQL-like syntax that compiles into the unified query model.
+6. Publish results against mixed workloads such as HTAP plus graph and telemetry.
 
-- query results,
-- selected physical plans,
-- workload statistics,
-- adaptive index/layout decisions.
